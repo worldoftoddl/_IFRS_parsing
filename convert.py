@@ -79,10 +79,11 @@ def process_single(docx_path: Path, output_dir: Path, dry_run: bool = False) -> 
     if dry_run:
         return stats
 
-    # 마크다운 렌더링
-    output_dir.mkdir(parents=True, exist_ok=True)
+    # 마크다운 렌더링 (IFRS_docx 하위 폴더 구조 유지)
+    sub_dir = output_dir / docx_path.parent.name
+    sub_dir.mkdir(parents=True, exist_ok=True)
     md_text = render_markdown(elements, footnotes)
-    md_path = output_dir / (docx_path.stem + ".md")
+    md_path = sub_dir / (docx_path.stem + ".md")
     md_path.write_text(md_text, encoding="utf-8")
     print(f"  → {md_path.name} ({len(md_text):,} chars)")
 
