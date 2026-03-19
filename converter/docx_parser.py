@@ -600,11 +600,17 @@ def _classify_table(
         return None
 
     # --- 내용 표 ---
-    headers = [c.text.strip().replace("\n", " ") for c in first_cells]
-    data_rows = []
-    for row in rows[1:]:
-        cells = _get_unique_cells(row)
-        data_rows.append([c.text.strip().replace("\n", " ") for c in cells])
+    # 병합 셀로 인해 헤더 행의 열 수가 실제보다 적을 수 있으므로
+    # 전체 행에서 최대 열 수를 기준으로 통일
+    all_row_cells = [_get_unique_cells(r) for r in rows]
+    max_cols = max(len(cells) for cells in all_row_cells)
+
+    def _row_texts(cells, n):
+        texts = [c.text.strip().replace("\n", " ") for c in cells]
+        return (texts + [""] * n)[:n]
+
+    headers = _row_texts(all_row_cells[0], max_cols)
+    data_rows = [_row_texts(cells, max_cols) for cells in all_row_cells[1:]]
 
     return ContentTable(
         headers=headers, rows=data_rows, section_type=current_section_type
@@ -678,7 +684,7 @@ def parse_docx(
                     elements.append(ContinuationText(
                         content=f"{el.marker} {el.content}",
                         section_type=current_section,
-                        runs=el.runs,
+                        runs=[],
                         footnote_refs=el.footnote_refs,
                     ))
                     stats["orphan_sub_items"] += 1
@@ -694,6 +700,7 @@ def parse_docx(
                 el.section_type = current_section
                 elements.append(el)
                 stats["continuation_texts"] += 1
+                last_numbered = None
 
         # ---- Table ----
         elif tag == qn("w:tbl"):
@@ -738,6 +745,7 @@ def parse_docx(
                         el.section_type = current_section
                         elements.append(el)
                         stats["continuation_texts"] += 1
+                        last_numbered = None
                     elif isinstance(el, SubItem) and last_numbered:
                         if el.marker in _MOK_MARKERS and last_numbered.sub_items:
                             last_numbered.sub_items[-1].sub_sub_items.append(el)

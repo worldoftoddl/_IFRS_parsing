@@ -275,8 +275,10 @@ def render_markdown(
         elif isinstance(el, ContentTable):
             if not el.headers:
                 continue
-            n = len(el.headers)
-            lines.append("| " + " | ".join(el.headers) + " |")
+            n = max(len(el.headers),
+                    max((len(r) for r in el.rows), default=0))
+            hdrs = (el.headers + [""] * n)[:n]
+            lines.append("| " + " | ".join(hdrs) + " |")
             lines.append("| " + " | ".join(["---"] * n) + " |")
             for row in el.rows:
                 padded = (row + [""] * n)[:n]

@@ -1,0 +1,3 @@
+- [project_footnote_inline.md](project_footnote_inline.md) — 2단계 청킹 시 각주 인라인화 전략
+- [project_bogosik_format.md](project_bogosik_format.md) — /보고식 명령어: 공백 정렬 재무제표 텍스트 → 표 변환 (미구현)
+- [project_definitions_context.md](project_definitions_context.md) — 용어 정의는 tool docstring/자동 컨텍스트로 LLM에 제공
