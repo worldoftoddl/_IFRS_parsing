@@ -609,8 +609,36 @@ def _classify_table(
         texts = [c.text.strip().replace("\n", " ") for c in cells]
         return (texts + [""] * n)[:n]
 
+    def _cell_paragraphs(cell):
+        """셀의 비어있지 않은 단락 텍스트 리스트 반환."""
+        return [p.text.strip() for p in cell.paragraphs if p.text.strip()]
+
+    def _expand_row(cells, n):
+        """다중 단락 셀을 여러 행으로 확장.
+
+        셀 중 하나라도 2개 이상의 비빈 단락을 가지면,
+        가장 많은 단락 수에 맞춰 여러 행으로 분리한다.
+        """
+        para_lists = [_cell_paragraphs(c) for c in cells]
+        # n 열에 맞추기
+        para_lists = (para_lists + [[]] * n)[:n]
+        max_paras = max((len(pl) for pl in para_lists), default=1)
+        if max_paras <= 1:
+            # 단일 행 — 기존 방식
+            return [_row_texts(cells, n)]
+        # 다중 행으로 확장
+        expanded = []
+        for i in range(max_paras):
+            row = []
+            for pl in para_lists:
+                row.append(pl[i] if i < len(pl) else "")
+            expanded.append(row)
+        return expanded
+
     headers = _row_texts(all_row_cells[0], max_cols)
-    data_rows = [_row_texts(cells, max_cols) for cells in all_row_cells[1:]]
+    data_rows = []
+    for cells in all_row_cells[1:]:
+        data_rows.extend(_expand_row(cells, max_cols))
 
     return ContentTable(
         headers=headers, rows=data_rows, section_type=current_section_type
