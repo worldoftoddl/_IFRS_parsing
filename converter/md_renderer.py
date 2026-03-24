@@ -179,13 +179,13 @@ def render_markdown(
 
         elif isinstance(el, SectionHeader):
             prefix = "#" * el.level
-            component = el.section_type
-            authority = _SECTION_AUTHORITY.get(el.section_type, 1)
-            # 개념체계(3)/실무서(4): authoritative 섹션도 base_authority로 오버라이드
-            if base_authority > 1 and authority == 1:
-                authority = base_authority
             lines.append(f"{prefix} {el.text}")
-            lines.append(f"<!-- component: {component} | authority: {authority} -->")
+            if el.level == 2:
+                component = el.section_type
+                authority = _SECTION_AUTHORITY.get(el.section_type, 1)
+                if base_authority > 1 and authority == 1:
+                    authority = base_authority
+                lines.append(f"<!-- component: {component} | authority: {authority} -->")
             lines.append("")
 
         elif isinstance(el, AuthorityMarker):
@@ -231,6 +231,8 @@ def render_markdown(
                 si_content = si.content
                 if si.runs:
                     si_content = _runs_to_markdown(si.runs, False)
+                if si_content.startswith(si.marker):
+                    si_content = si_content[len(si.marker):].lstrip()
                 si_content = _append_footnote_refs(si_content, si.footnote_refs)
                 all_footnote_ids.update(si.footnote_refs)
                 lines.append(f"\t{si.marker}\t{si_content}")
@@ -239,6 +241,8 @@ def render_markdown(
                     ssi_content = ssi.content
                     if ssi.runs:
                         ssi_content = _runs_to_markdown(ssi.runs, False)
+                    if ssi_content.startswith(ssi.marker):
+                        ssi_content = ssi_content[len(ssi.marker):].lstrip()
                     ssi_content = _append_footnote_refs(
                         ssi_content, ssi.footnote_refs
                     )

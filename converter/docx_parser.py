@@ -547,10 +547,11 @@ def _classify_paragraph(
             if inner and inner[0] in _ALL_SUB_MARKERS:
                 marker = inner[0]
                 rest = inner[1:].lstrip("\t ").strip()
+                content_runs = _strip_number_from_runs(runs, marker)
                 return SubItem(
                     marker=marker,
                     content=rest,
-                    runs=runs,
+                    runs=content_runs,
                     footnote_refs=footnote_refs,
                 )
 
@@ -573,10 +574,11 @@ def _classify_paragraph(
     if stripped and stripped[0] in _ALL_SUB_MARKERS:
         marker = stripped[0]
         rest = stripped[1:].lstrip("\t ").strip()
+        content_runs = _strip_number_from_runs(runs, marker)
         return SubItem(
             marker=marker,
             content=rest,
-            runs=runs,
+            runs=content_runs,
             footnote_refs=footnote_refs,
         )
 
