@@ -20,6 +20,11 @@ class MetaInfo:
     standard_title: str    # "유형자산" or "재무보고 개념체계"
     display_id: str        # "K-IFRS 1016" or "재무보고 개념체계"
     normalized_id: str     # "KIFRS1016" or "KIFRS_CF"
+    standard_type: str = ""       # "standard" | "interpretation" | "framework" | "practice_statement"
+    standard_family: str = ""     # "IAS" | "IFRS" | "SIC" | "IFRIC" | "CF" | "PS"
+    original_number: str = ""     # "IAS 2" | "IFRS 15" | "IFRIC 12" | "SIC 25"
+    base_authority: int = 1       # 1=기준서/해석서, 3=개념체계, 4=실무서
+    last_amended_year: str = ""   # "2017" (파일명에서 추출)
 
 
 @dataclass

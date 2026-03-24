@@ -73,7 +73,18 @@ _COPYRIGHT_KEYWORDS = [
     "COPYRIGHT NOTICE",
     "모든 저작권은 보호됩니다",
     "www.ifrs.org",
+    "kasb.or.kr",
+    "국제회계기준재단에 저작권",
+    "한국어 번역을 승인",
+    "Reproduction of the integral part",
+    "저작권을 주장할 권리를 포기",
+    "한국어로 재출간",
 ]
+
+# 저작권 블록의 단독 텍스트 (짧은 전화/팩스/이메일/주소 등)
+_COPYRIGHT_SHORT_RE = re.compile(
+    r"^(Tel:|Fax:|Email:|Web:|저작권|\+\d{2}\s|서울특별시)"
+)
 
 # 비표준 파일 ID 매핑
 _ETC_ID_MAP = {
@@ -88,6 +99,14 @@ _AUTHORITY_POSITIVE_RE = re.compile(
 )
 _AUTHORITY_NEGATIVE_RE = re.compile(
     r"일부를\s*구성하는\s*것은\s*아니다"
+)
+
+# Preamble zone 후 rubric 면책 필터 (첫 SectionHeader 직후 등장)
+_RUBRIC_DISCLAIMER_RE = re.compile(
+    r"^※\s.*구성하지는\s*않으나"
+)
+_STANDARD_TITLE_RE = re.compile(
+    r"^(기업회계기준서|기업회계기준해석서)\s*제\d+호$"
 )
 
 # 분류 임계값
@@ -309,34 +328,75 @@ def _extract_title_from_filename(filename: str) -> str:
     """파일명에서 기준서 제목 부분 추출."""
     m = re.search(r"제\d+호[_\s]*([^(]+)", filename)
     if m:
-        return m.group(1).strip().rstrip("_")
+        return m.group(1).strip().rstrip("_").replace("_", " ")
     return ""
+
+
+def _extract_last_amended_year(filename: str) -> str:
+    """파일명 괄호 안에서 최신 연도를 추출."""
+    m = re.search(r"\((\d{4})_", filename)
+    return m.group(1) if m else ""
+
+
+def _derive_standard_metadata(number: str) -> tuple[str, str, str, int]:
+    """기준서 번호에서 (standard_type, standard_family, original_number, base_authority) 파생."""
+    if not number:
+        return ("", "", "", 1)
+
+    n = int(number)
+    if 1000 <= n < 1100:
+        return ("standard", "IAS", f"IAS {n - 1000}", 1)
+    elif 1100 <= n < 1200:
+        return ("standard", "IFRS", f"IFRS {n - 1100}", 1)
+    elif 2000 <= n < 2100:
+        return ("interpretation", "SIC", f"SIC {n - 2000}", 1)
+    elif 2100 <= n < 2200:
+        return ("interpretation", "IFRIC", f"IFRIC {n - 2100}", 1)
+    return ("standard", "", "", 1)
 
 
 def _make_meta_from_filename(filename: str) -> MetaInfo:
     """파일명에서 MetaInfo 생성."""
     stem = Path(filename).stem
+    last_amended = _extract_last_amended_year(filename)
 
     # 표준 기준서 (제XXXX호)
     m = re.search(r"제(\d+)호", filename)
     if m:
         number = m.group(1)
         title = _extract_title_from_filename(filename)
+        std_type, std_family, orig_num, base_auth = _derive_standard_metadata(number)
         return MetaInfo(
             standard_number=number,
             standard_title=title,
             display_id=f"K-IFRS {number}",
             normalized_id=f"KIFRS{number}",
+            standard_type=std_type,
+            standard_family=std_family,
+            original_number=orig_num,
+            base_authority=base_auth,
+            last_amended_year=last_amended,
         )
 
-    # 비표준 파일
+    # 비표준 파일 (개념체계, 실무서)
     for key, (display, normalized) in _ETC_ID_MAP.items():
         if key in stem:
+            if "개념체계" in key:
+                std_type, std_family, base_auth = "framework", "CF", 3
+            elif "실무서" in key:
+                std_type, std_family, base_auth = "practice_statement", "PS", 4
+            else:
+                std_type, std_family, base_auth = "", "", 1
             return MetaInfo(
                 standard_number="",
                 standard_title=display,
                 display_id=display,
                 normalized_id=normalized,
+                standard_type=std_type,
+                standard_family=std_family,
+                original_number="",
+                base_authority=base_auth,
+                last_amended_year=last_amended,
             )
 
     # 폴백
@@ -345,6 +405,7 @@ def _make_meta_from_filename(filename: str) -> MetaInfo:
         standard_title=stem[:40],
         display_id=stem[:40],
         normalized_id=re.sub(r"[^\w]", "_", stem[:40]),
+        last_amended_year=last_amended,
     )
 
 
@@ -365,7 +426,9 @@ def _detect_section_from_text(text: str) -> str | None:
 
 
 def _is_copyright(text: str) -> bool:
-    return any(kw in text for kw in _COPYRIGHT_KEYWORDS)
+    if any(kw in text for kw in _COPYRIGHT_KEYWORDS):
+        return True
+    return bool(_COPYRIGHT_SHORT_RE.match(text.strip()))
 
 
 def _is_revision_table(all_text: str, n_rows: int) -> bool:
@@ -671,6 +734,7 @@ def parse_docx(
     current_section = "main"
     last_numbered: NumberedParagraph | None = None
     seen_section = False
+    post_section_rubric_count = 0  # 첫 SectionHeader 직후 rubric 면책 필터
 
     stats: defaultdict[str, int] = defaultdict(int)
     style_dist: dict = defaultdict(int)
@@ -690,6 +754,25 @@ def parse_docx(
             if not raw or not raw.strip():
                 stats["empty_paragraphs"] += 1
                 continue
+
+            stripped = raw.strip()
+
+            # Preamble zone: MetaInfo 이후 ~ 첫 SectionHeader 이전
+            # 저작권 블록, 주소, 전화/팩스 등 모두 건너뜀
+            if not seen_section:
+                stats["filtered_paragraphs"] += 1
+                stats["preamble_filtered"] += 1
+                continue
+
+            # 첫 SectionHeader 직후 rubric 면책 필터 (3줄 이내)
+            if post_section_rubric_count > 0:
+                post_section_rubric_count -= 1
+                if (_RUBRIC_DISCLAIMER_RE.match(stripped)
+                        or _STANDARD_TITLE_RE.match(stripped)
+                        or len(stripped) < 20):
+                    stats["filtered_paragraphs"] += 1
+                    stats["rubric_filtered"] += 1
+                    continue
 
             runs = _xml_para_runs(child)
             fn_refs = _extract_footnote_refs(child)
@@ -749,6 +832,9 @@ def parse_docx(
                 current_section = el.section_type
                 elements.append(el)
                 last_numbered = None
+                if not seen_section:
+                    # 첫 SectionHeader 직후 rubric 면책 문구 필터 활성화
+                    post_section_rubric_count = 3
                 seen_section = True
                 stats["section_headers"] += 1
 

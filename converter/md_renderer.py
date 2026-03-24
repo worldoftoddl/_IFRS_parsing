@@ -106,6 +106,29 @@ def _append_footnote_refs(text: str, refs: list[int]) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _collect_render_stats(
+    elements: list[IRElement],
+) -> tuple[list[str], bool, int]:
+    """요소 리스트에서 렌더링 통계를 수집한다.
+
+    Returns:
+        (components_present, has_korean_additions, korean_paragraph_count)
+    """
+    components: set[str] = set()
+    has_korean = False
+    korean_count = 0
+
+    for el in elements:
+        if isinstance(el, SectionHeader):
+            components.add(el.section_type)
+        elif isinstance(el, NumberedParagraph):
+            if el.is_korean_addition:
+                has_korean = True
+                korean_count += 1
+
+    return sorted(components), has_korean, korean_count
+
+
 def render_markdown(
     elements: list[IRElement],
     footnotes: dict[int, Footnote],
@@ -113,6 +136,19 @@ def render_markdown(
     """IR 요소 리스트를 구조 보존 마크다운으로 렌더링."""
     lines: list[str] = []
     all_footnote_ids: set[int] = set()
+
+    # 1-pass: 통계 수집 (프론트매터용)
+    components_present, has_korean, korean_count = _collect_render_stats(elements)
+
+    # MetaInfo 추출
+    meta: MetaInfo | None = None
+    for el in elements:
+        if isinstance(el, MetaInfo):
+            meta = el
+            break
+
+    # base_authority: 개념체계(3), 실무서(4)는 섹션 authority를 오버라이드
+    base_authority = meta.base_authority if meta else 1
 
     for el in elements:
         if isinstance(el, MetaInfo):
@@ -122,6 +158,20 @@ def render_markdown(
             if el.standard_number:
                 lines.append(f'standard_number: "{el.standard_number}"')
             lines.append(f'title: "{el.standard_title}"')
+            if el.standard_type:
+                lines.append(f'standard_type: "{el.standard_type}"')
+            if el.standard_family:
+                lines.append(f'standard_family: "{el.standard_family}"')
+            if el.original_number:
+                lines.append(f'original_number: "{el.original_number}"')
+            lines.append(f"base_authority: {el.base_authority}")
+            if el.last_amended_year:
+                lines.append(f'last_amended_year: "{el.last_amended_year}"')
+            if components_present:
+                lines.append(f'components: [{", ".join(components_present)}]')
+            lines.append(f"has_korean_additions: {'true' if has_korean else 'false'}")
+            if korean_count > 0:
+                lines.append(f"korean_paragraph_count: {korean_count}")
             lines.append("---")
             lines.append("")
             lines.append(f"# {el.display_id} {el.standard_title}")
@@ -131,6 +181,9 @@ def render_markdown(
             prefix = "#" * el.level
             component = el.section_type
             authority = _SECTION_AUTHORITY.get(el.section_type, 1)
+            # 개념체계(3)/실무서(4): authoritative 섹션도 base_authority로 오버라이드
+            if base_authority > 1 and authority == 1:
+                authority = base_authority
             lines.append(f"{prefix} {el.text}")
             lines.append(f"<!-- component: {component} | authority: {authority} -->")
             lines.append("")
