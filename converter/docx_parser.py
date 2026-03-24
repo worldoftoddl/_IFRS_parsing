@@ -109,6 +109,22 @@ _STANDARD_TITLE_RE = re.compile(
     r"^(기업회계기준서|기업회계기준해석서)\s*제\d+호$"
 )
 
+# 위원회 의결 블록 필터
+_COMMITTEE_RESOLUTION_RE = re.compile(
+    r"(회계기준위원회의\s*의결|위원\s*\d+\s*명.*찬성으로\s*의결)"
+)
+_COMMITTEE_MEMBER_RE = re.compile(
+    r"^[가-힣]{2,4}\(위원장\)"
+)
+_NAMES_ONLY_RE = re.compile(
+    r"^[가-힣]{2,4}(,\s*[가-힣]{2,4})+$"
+)
+
+# 제·개정 경과 블록 감지
+_AMENDMENT_HISTORY_RE = re.compile(
+    r"^(제[·/]개정\s*경과|제정\s*경과)$"
+)
+
 # 분류 임계값
 _MAX_AUTHORITY_MARKER_LEN = 200
 _MAX_1X1_SECTION_HEADER_LEN = 100
@@ -479,6 +495,14 @@ def _classify_paragraph(
 
     stripped = raw_text.strip()
 
+    # 위원회 의결 블록 필터
+    if _COMMITTEE_RESOLUTION_RE.search(stripped):
+        return None
+    if _COMMITTEE_MEMBER_RE.match(stripped):
+        return None
+    if _NAMES_ONLY_RE.match(stripped):
+        return None
+
     # 권위 수준 마커 감지 (짧은 선언 문구만)
     if len(stripped) < _MAX_AUTHORITY_MARKER_LEN:
         auth_marker = _check_authority_marker(stripped)
@@ -735,6 +759,7 @@ def parse_docx(
     last_numbered: NumberedParagraph | None = None
     seen_section = False
     post_section_rubric_count = 0  # 첫 SectionHeader 직후 rubric 면책 필터
+    in_amendment_history = False   # "제·개정 경과" 이후 ~ 다음 SectionHeader까지 스킵
 
     stats: defaultdict[str, int] = defaultdict(int)
     style_dist: dict = defaultdict(int)
@@ -808,12 +833,23 @@ def parse_docx(
                 continue
 
             if isinstance(el, NumberedParagraph):
+                if in_amendment_history:
+                    stats["amendment_history_filtered"] += 1
+                    continue
                 el.section_type = current_section
                 elements.append(el)
                 last_numbered = el
                 stats["numbered_paragraphs"] += 1
 
             elif isinstance(el, ContinuationText):
+                # "제·개정 경과" 블록 시작 감지
+                if _AMENDMENT_HISTORY_RE.match(el.content.strip()):
+                    in_amendment_history = True
+                    stats["amendment_history_filtered"] += 1
+                    continue
+                if in_amendment_history:
+                    stats["amendment_history_filtered"] += 1
+                    continue
                 el.section_type = current_section
                 elements.append(el)
                 stats["continuation_texts"] += 1
@@ -832,6 +868,7 @@ def parse_docx(
                 current_section = el.section_type
                 elements.append(el)
                 last_numbered = None
+                in_amendment_history = False  # SectionHeader 만나면 제·개정 경과 종료
                 if not seen_section:
                     # 첫 SectionHeader 직후 rubric 면책 문구 필터 활성화
                     post_section_rubric_count = 3
