@@ -96,6 +96,8 @@ class Footnote:
     runs: list[FormattedRun] = field(default_factory=list)
 
 
+# SubItem은 항상 NumberedParagraph.sub_items의 자식으로만 존재하며 최상위 요소가 아니다.
+# Footnote는 별도의 dict[int, Footnote]로 반환되며 이 리스트에 포함되지 않는다.
 IRElement = (
     MetaInfo | SectionHeader | AuthorityMarker
     | NumberedParagraph | ContinuationText | ContentTable

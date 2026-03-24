@@ -7,16 +7,16 @@ Usage:
 """
 
 import argparse
-import sys
-from collections import defaultdict
+import traceback
 from pathlib import Path
 
 from converter.docx_parser import parse_docx
 from converter.md_renderer import render_markdown
-from converter.models import MetaInfo
+from converter.models import ContinuationText as CT, NumberedParagraph as NP
 
-DOCX_DIR = Path("IFRS_docx")
-OUTPUT_DIR = Path("output/md")
+_PROJECT_ROOT = Path(__file__).resolve().parent
+DOCX_DIR = _PROJECT_ROOT / "IFRS_docx"
+OUTPUT_DIR = _PROJECT_ROOT / "output" / "md"
 
 
 def process_single(docx_path: Path, output_dir: Path, dry_run: bool = False) -> dict:
@@ -24,7 +24,6 @@ def process_single(docx_path: Path, output_dir: Path, dry_run: bool = False) -> 
     print(f"\n[{docx_path.name}]")
 
     elements, footnotes, stats = parse_docx(str(docx_path))
-    meta = next((e for e in elements if isinstance(e, MetaInfo)), None)
 
     np = stats.get("numbered_paragraphs", 0)
     ct = stats.get("continuation_texts", 0)
@@ -53,7 +52,6 @@ def process_single(docx_path: Path, output_dir: Path, dry_run: bool = False) -> 
         print(f"  styles top3: {top3_str}")
 
     # bold 문단 통계
-    from converter.models import NumberedParagraph as NP, ContinuationText as CT
     bold_count = sum(
         1 for e in elements
         if (isinstance(e, NP) and e.is_fully_bold)
@@ -118,7 +116,6 @@ def process_all(
             all_stats.append({"file": f.name, **stats})
         except Exception as e:
             print(f"  [ERROR] {e}")
-            import traceback
             traceback.print_exc()
             failures.append({"file": f.name, "error": str(e)})
 
@@ -147,8 +144,8 @@ def process_all(
 
     if failures:
         print(f"\nFAILURES ({len(failures)}):")
-        for f in failures:
-            print(f"  {f['file']}: {f['error']}")
+        for fail_info in failures:
+            print(f"  {fail_info['file']}: {fail_info['error']}")
 
     print("\nDone.")
 

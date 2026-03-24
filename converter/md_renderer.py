@@ -19,7 +19,6 @@ from converter.models import (
     MetaInfo,
     NumberedParagraph,
     SectionHeader,
-    SubItem,
 )
 
 # ---------------------------------------------------------------------------
@@ -35,73 +34,13 @@ _SECTION_AUTHORITY: dict[str, int] = {
     "bc": 4,
 }
 
-_SECTION_COMPONENT: dict[str, str] = {
-    "main": "main",
-    "definitions": "definitions",
-    "ag": "ag",
-    "transition": "transition",
-    "ie": "ie",
-    "bc": "bc",
-}
-
-
 # ---------------------------------------------------------------------------
 # run → 서식 마크다운 변환
 # ---------------------------------------------------------------------------
 
 
 def _runs_to_markdown(runs: list[FormattedRun], is_fully_bold: bool) -> str:
-    """FormattedRun 리스트를 마크다운 서식 텍스트로 변환.
-
-    is_fully_bold가 True이면 전체를 **로 감싸므로 개별 bold 마킹 생략.
-    """
-    if not runs:
-        return ""
-
-    parts: list[str] = []
-    for run in runs:
-        text = run.text
-        if not text:
-            continue
-
-        # 탭/줄바꿈은 서식 적용하지 않음
-        if text.strip() == "":
-            parts.append(text)
-            continue
-
-        if is_fully_bold:
-            # 전체 bold이므로 italic만 처리
-            if run.italic:
-                parts.append(f"*{text}*")
-            else:
-                parts.append(text)
-        else:
-            if run.bold and run.italic:
-                parts.append(f"***{text}***")
-            elif run.bold:
-                parts.append(f"**{text}**")
-            elif run.italic:
-                parts.append(f"*{text}*")
-            else:
-                parts.append(text)
-
-    result = "".join(parts)
-
-    # 연속 마커 정리: **text1****text2** → **text1text2**
-    result = result.replace("****", "")
-    result = result.replace("****** ", " ***")
-    result = result.replace("** **", " ")
-    # italic 연속 정리
-    result = result.replace("**", "")  # 이건 너무 공격적
-
-    # 다시 생각: 단순 join 후 연속 마커만 정리
-    # 위의 접근이 위험하므로 다른 방식으로...
-
-    return result
-
-
-def _runs_to_markdown_v2(runs: list[FormattedRun], is_fully_bold: bool) -> str:
-    """FormattedRun 리스트를 마크다운 서식 텍스트로 변환 (v2: 안전한 구현)."""
+    """FormattedRun 리스트를 마크다운 서식 텍스트로 변환."""
     if not runs:
         return ""
 
@@ -173,7 +112,6 @@ def render_markdown(
 ) -> str:
     """IR 요소 리스트를 구조 보존 마크다운으로 렌더링."""
     lines: list[str] = []
-    current_authority: int = 1
     all_footnote_ids: set[int] = set()
 
     for el in elements:
@@ -191,9 +129,8 @@ def render_markdown(
 
         elif isinstance(el, SectionHeader):
             prefix = "#" * el.level
-            component = _SECTION_COMPONENT.get(el.section_type, el.section_type)
+            component = el.section_type
             authority = _SECTION_AUTHORITY.get(el.section_type, 1)
-            current_authority = authority
             lines.append(f"{prefix} {el.text}")
             lines.append(f"<!-- component: {component} | authority: {authority} -->")
             lines.append("")
@@ -210,7 +147,7 @@ def render_markdown(
         elif isinstance(el, NumberedParagraph):
             # 서식 적용된 content
             if el.runs:
-                formatted_content = _runs_to_markdown_v2(el.runs, el.is_fully_bold)
+                formatted_content = _runs_to_markdown(el.runs, el.is_fully_bold)
             else:
                 formatted_content = el.content
 
@@ -240,7 +177,7 @@ def render_markdown(
             for si in el.sub_items:
                 si_content = si.content
                 if si.runs:
-                    si_content = _runs_to_markdown_v2(si.runs, False)
+                    si_content = _runs_to_markdown(si.runs, False)
                 si_content = _append_footnote_refs(si_content, si.footnote_refs)
                 all_footnote_ids.update(si.footnote_refs)
                 lines.append(f"\t{si.marker}\t{si_content}")
@@ -248,7 +185,7 @@ def render_markdown(
                 for ssi in si.sub_sub_items:
                     ssi_content = ssi.content
                     if ssi.runs:
-                        ssi_content = _runs_to_markdown_v2(ssi.runs, False)
+                        ssi_content = _runs_to_markdown(ssi.runs, False)
                     ssi_content = _append_footnote_refs(
                         ssi_content, ssi.footnote_refs
                     )
@@ -259,7 +196,7 @@ def render_markdown(
 
         elif isinstance(el, ContinuationText):
             if el.runs:
-                formatted = _runs_to_markdown_v2(el.runs, el.is_fully_bold)
+                formatted = _runs_to_markdown(el.runs, el.is_fully_bold)
             else:
                 formatted = el.content
 

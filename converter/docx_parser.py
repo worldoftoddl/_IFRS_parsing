@@ -13,9 +13,9 @@ import re
 import zipfile
 from collections import defaultdict
 from pathlib import Path
-from typing import Optional
 
 from docx import Document
+from docx.document import Document as _DocxDocument
 from docx.oxml.ns import qn
 from docx.table import Table as DocxTable
 from lxml import etree
@@ -90,6 +90,12 @@ _AUTHORITY_NEGATIVE_RE = re.compile(
     r"일부를\s*구성하는\s*것은\s*아니다"
 )
 
+# 분류 임계값
+_MAX_AUTHORITY_MARKER_LEN = 200
+_MAX_1X1_SECTION_HEADER_LEN = 100
+_MAX_SECTION_DETECT_LEN = 50
+_MAX_SUBSECTION_HEADER_LEN = 30
+
 # XML 1.0 유효하지 않은 문자
 _INVALID_XML_RE = re.compile(
     "[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x84\x86-\x9f"
@@ -102,7 +108,7 @@ _INVALID_XML_RE = re.compile(
 # ---------------------------------------------------------------------------
 
 
-def _open_docx(docx_path: str) -> tuple[Document, dict[str, bytes]]:
+def _open_docx(docx_path: str) -> tuple[_DocxDocument, dict[str, bytes]]:
     """DOCX 파일을 열고, 정제된 Document와 원본 파트 데이터를 반환한다.
 
     Returns:
@@ -233,7 +239,7 @@ def _extract_footnote_refs(p_elem) -> list[int]:
     return refs
 
 
-def _xml_para_style(p_elem) -> Optional[str]:
+def _xml_para_style(p_elem) -> str | None:
     """<w:p>에서 스타일 ID 추출."""
     pPr = p_elem.find(qn("w:pPr"))
     if pPr is not None:
@@ -347,7 +353,7 @@ def _make_meta_from_filename(filename: str) -> MetaInfo:
 # ---------------------------------------------------------------------------
 
 
-def _detect_section_from_text(text: str) -> Optional[str]:
+def _detect_section_from_text(text: str) -> str | None:
     """1x1 표 텍스트에서 섹션 타입 감지."""
     text_clean = text.strip()
     for keyword, section_type in _SECTION_TEXT_MAP:
@@ -382,7 +388,7 @@ def _is_meta_or_toc_table(all_text: str, seen_section: bool) -> bool:
     return hit >= 1 and len(all_text) < 500
 
 
-def _check_authority_marker(text: str) -> Optional[AuthorityMarker]:
+def _check_authority_marker(text: str) -> AuthorityMarker | None:
     """권위 수준 선언 문구를 감지한다."""
     if _AUTHORITY_NEGATIVE_RE.search(text):
         return AuthorityMarker(text=text.strip(), is_authoritative=False)
@@ -396,7 +402,7 @@ def _classify_paragraph(
     current_section_type: str,
     runs: list[FormattedRun],
     footnote_refs: list[int],
-):
+) -> NumberedParagraph | SubItem | ContinuationText | AuthorityMarker | None:
     """문단 텍스트를 IR 요소로 분류.
 
     Returns:
@@ -411,10 +417,10 @@ def _classify_paragraph(
     stripped = raw_text.strip()
 
     # 권위 수준 마커 감지 (짧은 선언 문구만)
-    if len(stripped) < 200:
-        marker = _check_authority_marker(stripped)
-        if marker is not None:
-            return marker
+    if len(stripped) < _MAX_AUTHORITY_MARKER_LEN:
+        auth_marker = _check_authority_marker(stripped)
+        if auth_marker is not None:
+            return auth_marker
 
     fully_bold = _is_fully_bold(runs)
 
@@ -543,17 +549,47 @@ def _strip_number_from_runs(
     return result if result else runs
 
 
+def _row_texts(cells, n: int) -> list[str]:
+    """셀 리스트에서 텍스트를 추출하여 n개 열로 맞춤."""
+    texts = [c.text.strip().replace("\n", " ") for c in cells]
+    return (texts + [""] * n)[:n]
+
+
+def _cell_paragraphs(cell) -> list[str]:
+    """셀의 비어있지 않은 단락 텍스트 리스트 반환."""
+    return [p.text.strip() for p in cell.paragraphs if p.text.strip()]
+
+
+def _expand_row(cells, n: int) -> list[list[str]]:
+    """다중 단락 셀을 여러 행으로 확장.
+
+    셀 중 하나라도 2개 이상의 비빈 단락을 가지면,
+    가장 많은 단락 수에 맞춰 여러 행으로 분리한다.
+    """
+    para_lists = [_cell_paragraphs(c) for c in cells]
+    # n 열에 맞추기
+    para_lists = (para_lists + [[]] * n)[:n]
+    max_paras = max((len(pl) for pl in para_lists), default=1)
+    if max_paras <= 1:
+        # 단일 행 — 기존 방식
+        return [_row_texts(cells, n)]
+    # 다중 행으로 확장
+    expanded = []
+    for i in range(max_paras):
+        row = []
+        for pl in para_lists:
+            row.append(pl[i] if i < len(pl) else "")
+        expanded.append(row)
+    return expanded
+
+
 def _classify_table(
     table: DocxTable,
     current_section_type: str,
-    stats: dict,
+    stats: defaultdict[str, int],
     seen_section: bool,
-):
-    """표를 IR 요소로 분류.
-
-    Returns:
-        SectionHeader | ContentTable | None
-    """
+) -> SectionHeader | ContentTable | None:
+    """표를 IR 요소로 분류."""
     rows = list(table.rows)
     if not rows:
         return None
@@ -568,35 +604,35 @@ def _classify_table(
         if not text:
             return None
 
-        if len(text) > 100:
-            stats["skipped_long_1x1"] = stats.get("skipped_long_1x1", 0) + 1
+        if len(text) > _MAX_1X1_SECTION_HEADER_LEN:
+            stats["skipped_long_1x1"] += 1
             return None
 
         section_type = _detect_section_from_text(text)
-        if section_type is not None and len(text) < 50:
+        if section_type is not None and len(text) < _MAX_SECTION_DETECT_LEN:
             return SectionHeader(text=text, level=2, section_type=section_type)
 
-        if len(text) < 30:
+        if len(text) < _MAX_SUBSECTION_HEADER_LEN:
             return SectionHeader(
                 text=text, level=3, section_type=current_section_type
             )
 
-        stats["skipped_medium_1x1"] = stats.get("skipped_medium_1x1", 0) + 1
+        stats["skipped_medium_1x1"] += 1
         return None
 
     # --- 다중 행/열 ---
     all_text = " ".join(c.text for r in rows for c in r.cells)
 
     if _is_revision_table(all_text, n_rows):
-        stats["revision_tables"] = stats.get("revision_tables", 0) + 1
+        stats["revision_tables"] += 1
         return None
 
     if _is_meta_or_toc_table(all_text, seen_section):
-        stats["meta_tables"] = stats.get("meta_tables", 0) + 1
+        stats["meta_tables"] += 1
         return None
 
     if _is_copyright(all_text):
-        stats["copyright_tables"] = stats.get("copyright_tables", 0) + 1
+        stats["copyright_tables"] += 1
         return None
 
     # --- 내용 표 ---
@@ -604,36 +640,6 @@ def _classify_table(
     # 전체 행에서 최대 열 수를 기준으로 통일
     all_row_cells = [_get_unique_cells(r) for r in rows]
     max_cols = max(len(cells) for cells in all_row_cells)
-
-    def _row_texts(cells, n):
-        texts = [c.text.strip().replace("\n", " ") for c in cells]
-        return (texts + [""] * n)[:n]
-
-    def _cell_paragraphs(cell):
-        """셀의 비어있지 않은 단락 텍스트 리스트 반환."""
-        return [p.text.strip() for p in cell.paragraphs if p.text.strip()]
-
-    def _expand_row(cells, n):
-        """다중 단락 셀을 여러 행으로 확장.
-
-        셀 중 하나라도 2개 이상의 비빈 단락을 가지면,
-        가장 많은 단락 수에 맞춰 여러 행으로 분리한다.
-        """
-        para_lists = [_cell_paragraphs(c) for c in cells]
-        # n 열에 맞추기
-        para_lists = (para_lists + [[]] * n)[:n]
-        max_paras = max((len(pl) for pl in para_lists), default=1)
-        if max_paras <= 1:
-            # 단일 행 — 기존 방식
-            return [_row_texts(cells, n)]
-        # 다중 행으로 확장
-        expanded = []
-        for i in range(max_paras):
-            row = []
-            for pl in para_lists:
-                row.append(pl[i] if i < len(pl) else "")
-            expanded.append(row)
-        return expanded
 
     headers = _row_texts(all_row_cells[0], max_cols)
     data_rows = []
@@ -663,10 +669,10 @@ def parse_docx(
 
     elements: list[IRElement] = [meta]
     current_section = "main"
-    last_numbered: Optional[NumberedParagraph] = None
+    last_numbered: NumberedParagraph | None = None
     seen_section = False
 
-    stats: dict = defaultdict(int)
+    stats: defaultdict[str, int] = defaultdict(int)
     style_dist: dict = defaultdict(int)
 
     body = doc.element.body
