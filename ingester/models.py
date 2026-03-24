@@ -61,9 +61,11 @@ class ParagraphLink:
 
 @dataclass
 class StandardSummary:
-    """기준서 식별용 요약 (목적 + 적용범위)."""
+    """기준서 식별용 요약 (목적 + 적용범위 + 정의)."""
 
     standard_id: str
     title: str
     scope_text: str             # 임베딩용 plain text
     scope_markdown: str         # LLM 컨텍스트용 원본
+    definitions_text: str = ""  # 정의 섹션 plain text (LLM 컨텍스트용)
+    definitions_markdown: str = ""  # 정의 섹션 원본 마크다운

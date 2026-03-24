@@ -55,6 +55,8 @@ CREATE TABLE IF NOT EXISTS standard_summaries (
     title               TEXT NOT NULL,
     scope_text          TEXT NOT NULL,
     scope_markdown      TEXT NOT NULL,
+    definitions_text    TEXT NOT NULL DEFAULT '',
+    definitions_markdown TEXT NOT NULL DEFAULT '',
     embedding           vector(4096),
     created_at          TIMESTAMPTZ DEFAULT NOW()
 );

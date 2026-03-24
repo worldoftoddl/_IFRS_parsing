@@ -106,13 +106,19 @@ class DBWriter:
     ):
         self.conn.execute("""
             INSERT INTO standard_summaries (
-                standard_id, title, scope_text, scope_markdown, embedding
-            ) VALUES (%s,%s,%s,%s,%s)
+                standard_id, title, scope_text, scope_markdown,
+                definitions_text, definitions_markdown, embedding
+            ) VALUES (%s,%s,%s,%s,%s,%s,%s)
             ON CONFLICT (standard_id) DO UPDATE SET
                 scope_text=EXCLUDED.scope_text,
                 scope_markdown=EXCLUDED.scope_markdown,
+                definitions_text=EXCLUDED.definitions_text,
+                definitions_markdown=EXCLUDED.definitions_markdown,
                 embedding=EXCLUDED.embedding
-        """, (r.standard_id, r.title, r.scope_text, r.scope_markdown, embedding))
+        """, (
+            r.standard_id, r.title, r.scope_text, r.scope_markdown,
+            r.definitions_text, r.definitions_markdown, embedding,
+        ))
 
     # ------------------------------------------------------------------
     # Paragraph Links

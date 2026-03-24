@@ -19,6 +19,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+from ingester.chunk_splitter import split_oversized_chunks
 from ingester.config import Config
 from ingester.link_extractor import extract_links
 from ingester.md_parser import parse_markdown_file
@@ -38,7 +39,7 @@ def export_json(
     """청크를 기준서별 JSON으로 내보내기."""
     md_path = Path(config.md_dir)
     files = sorted(md_path.rglob("*.md"))
-    out_dir = Path("output/chunks")
+    out_dir = Path("output/search_chunks")
     out_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"Exporting {len(files)} files to {out_dir}/")
@@ -57,14 +58,17 @@ def export_json(
             if single_standard and standard.standard_id != single_standard:
                 continue
 
+            chunks = split_oversized_chunks(chunks)
             links = extract_links(standard.standard_id, chunks)
             summary = build_summary(standard, chunks)
-            standard.total_chunks = len(chunks)
-            total_standards += 1
-            total_chunks += len(chunks)
 
-            # 토큰 분포 집계
-            for c in chunks:
+            search_chunks = [c for c in chunks if c.component != "definitions"]
+            standard.total_chunks = len(search_chunks)
+            total_standards += 1
+            total_chunks += len(search_chunks)
+
+            # 토큰 분포 집계 (검색 대상 청크만)
+            for c in search_chunks:
                 t = c.token_estimate
                 if t < 100:
                     token_buckets["0-100"] += 1
@@ -86,12 +90,12 @@ def export_json(
                         "token_estimate": c.token_estimate,
                     })
 
-            # 기준서별 JSON
+            # 기준서별 JSON (검색 대상 청크만)
             nid = _normalize_id(standard.standard_id)
             data = {
                 "standard": asdict(standard),
                 "summary": asdict(summary),
-                "chunks": [asdict(c) for c in chunks],
+                "chunks": [asdict(c) for c in search_chunks],
                 "links": [asdict(l) for l in links],
                 "footnotes": [asdict(fn) for fn in footnotes],
             }
@@ -174,20 +178,25 @@ def process_all(
             if single_standard and standard.standard_id != single_standard:
                 continue
 
+            chunks = split_oversized_chunks(chunks)
             links = extract_links(standard.standard_id, chunks)
             summary = build_summary(standard, chunks)
-            standard.total_chunks = len(chunks)
 
-            total_chunks += len(chunks)
+            # 정의 청크는 summary에 포함되므로 임베딩/검색 대상에서 제외
+            search_chunks = [c for c in chunks if c.component != "definitions"]
+            standard.total_chunks = len(search_chunks)
+
+            total_chunks += len(search_chunks)
             total_links += len(links)
             total_footnotes += len(footnotes)
-            for c in chunks:
+            for c in search_chunks:
                 component_dist[c.component] += 1
                 authority_dist[c.authority] += 1
 
+            def_count = len(chunks) - len(search_chunks)
             print(f"\n[{standard.standard_id}] {standard.title}")
-            print(f"  chunks={len(chunks)}, links={len(links)}, "
-                  f"footnotes={len(footnotes)}")
+            print(f"  chunks={len(search_chunks)}, definitions={def_count}, "
+                  f"links={len(links)}, footnotes={len(footnotes)}")
 
             if parse_only:
                 continue
@@ -199,13 +208,13 @@ def process_all(
             chunk_embeddings = None
             summary_embedding = None
             if embedder:
-                texts = [c.content_text for c in chunks]
+                texts = [c.content_text for c in search_chunks]
                 print(f"  Embedding {len(texts)} chunks...", end="", flush=True)
                 chunk_embeddings = embedder.embed_batch(texts)
                 summary_embedding = embedder.embed_single(summary.scope_text)
                 print(" done.")
 
-            db.upsert_chunks(chunks, chunk_embeddings)
+            db.upsert_chunks(search_chunks, chunk_embeddings)
             db.upsert_summary(summary, summary_embedding)
 
         except Exception as e:
