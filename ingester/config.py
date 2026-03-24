@@ -7,16 +7,17 @@ from dataclasses import dataclass
 @dataclass
 class Config:
     db_url: str = ""
-    openai_api_key: str = ""
-    embedding_model: str = "text-embedding-3-small"
-    embedding_dimensions: int = 1536
+    upstage_api_key: str = ""
+    embedding_model: str = "embedding-passage"
+    embedding_dimensions: int = 4096
+    embedding_base_url: str = "https://api.upstage.ai/v1"
     md_dir: str = "output/md"
-    batch_size: int = 500
+    batch_size: int = 100  # Upstage 배치 제한이 OpenAI보다 작을 수 있음
 
     @classmethod
     def from_env(cls) -> "Config":
         return cls(
-            db_url=os.environ.get("DATABASE_URL", "postgresql://localhost:5432/kifrs"),
-            openai_api_key=os.environ.get("OPENAI_API_KEY", ""),
+            db_url=os.environ.get("DATABASE_URL", "dbname=kifrs"),
+            upstage_api_key=os.environ.get("UPSTAGE_API_KEY", ""),
             md_dir=os.environ.get("MD_DIR", "output/md"),
         )

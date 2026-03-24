@@ -42,13 +42,13 @@ _NSMAP = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
 # 섹션 감지 매핑 (우선순위: 구체적 → 일반적)
 _SECTION_TEXT_MAP: list[tuple[str, str]] = [
     ("결론도출근거", "bc"),
+    ("실무적용지침", "ie"),      # "적용지침"보다 먼저 매칭해야 함
     ("적용지침", "ag"),
     ("부록 B", "ag"),
     ("용어의 정의", "definitions"),
     ("부록 A", "definitions"),
     ("경과규정", "transition"),
     ("사례", "ie"),
-    ("실무적용지침", "ie"),
     ("본 문", "main"),
     ("시행일", "main"),
 ]

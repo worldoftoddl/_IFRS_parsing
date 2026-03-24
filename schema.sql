@@ -29,7 +29,7 @@ CREATE TABLE IF NOT EXISTS chunks (
     authority           SMALLINT NOT NULL,
     content_text        TEXT NOT NULL,
     content_markdown    TEXT NOT NULL,
-    embedding           vector(1536),
+    embedding           vector(4096),
     char_count          INTEGER NOT NULL,
     token_estimate      INTEGER NOT NULL,
     created_at          TIMESTAMPTZ DEFAULT NOW()
@@ -55,7 +55,7 @@ CREATE TABLE IF NOT EXISTS standard_summaries (
     title               TEXT NOT NULL,
     scope_text          TEXT NOT NULL,
     scope_markdown      TEXT NOT NULL,
-    embedding           vector(1536),
+    embedding           vector(4096),
     created_at          TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -77,10 +77,9 @@ CREATE INDEX IF NOT EXISTS idx_links_standard_target
 CREATE INDEX IF NOT EXISTS idx_links_source_component
     ON paragraph_links(standard_id, source_component);
 
--- HNSW 벡터 인덱스 (임베딩 삽입 후 생성 권장)
+-- IVFFlat 벡터 인덱스 (임베딩 삽입 후 ingest.py가 자동 생성)
+-- pgvector 0.6은 HNSW 최대 2000차원, 4096차원은 IVFFlat 사용
 -- CREATE INDEX idx_chunks_embedding ON chunks
---     USING hnsw (embedding vector_cosine_ops)
---     WITH (m = 16, ef_construction = 64);
+--     USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
 -- CREATE INDEX idx_summaries_embedding ON standard_summaries
---     USING hnsw (embedding vector_cosine_ops)
---     WITH (m = 16, ef_construction = 64);
+--     USING ivfflat (embedding vector_cosine_ops) WITH (lists = 4);
