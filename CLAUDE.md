@@ -4,49 +4,74 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 프로젝트 개요
 
-K-IFRS(한국채택국제회계기준) 원문 .docx 파일을 **구조 보존 마크다운**으로 변환하고, 이를 벡터 DB에 적재하기 위한 2단계 파이프라인 프로젝트.
+K-IFRS(한국채택국제회계기준) 원문 .docx 파일을 **구조 보존 마크다운**으로 변환하고, 이를 벡터 DB에 적재하여 검색하는 2단계 파이프라인 프로젝트.
 
-- **1단계** (이 저장소): docx → 구조 보존 마크다운 (사람이 검수 가능한 중간 산출물)
-- **2단계** (예정): 구조 보존 마크다운 → 청크 + 메타데이터 (벡터 DB 적재용)
+- **Stage 1** (`convert.py` + `converter/`): docx → 구조 보존 마크다운 (사람이 검수 가능한 중간 산출물)
+- **Stage 2** (`ingest.py` + `ingester/`): 구조 보존 마크다운 → 청크 + 메타데이터 → PostgreSQL+pgvector 적재
+- **검색**: `search_test.ipynb` — 2단계 벡터 검색 (기준서 식별 → 문단 검색)
 - **관련 프로젝트**: 기존 파싱/임베딩/검색 코드 → `/home/shin/Home/Study/_database/`
 
 ## 저장소 구조
 
 ```
-├── convert.py              ← CLI 엔트리포인트
+├── convert.py              ← Stage 1 CLI (docx → 마크다운)
 ├── converter/
 │   ├── __init__.py
 │   ├── models.py           ← IR 데이터클래스 (FormattedRun, AuthorityMarker 등)
 │   ├── docx_parser.py      ← docx → IR 파서 (bold/italic, 각주, 권위 마커 추출)
 │   └── md_renderer.py      ← IR → 구조 보존 마크다운 렌더러
-├── pyproject.toml           ← 프로젝트 설정 (python-docx, lxml)
-├── IFRS_docx/               ← K-IFRS 원문 .docx 파일들 (63개)
-│   ├── IAS_10XX/            ← IAS 계열 (IASC 발행 기준서) — 25개
-│   ├── IFRS_11XX/           ← IFRS 계열 (IASB 발행 기준서) — 16개
-│   ├── SIC_20XX/            ← SIC 해석서 (IASC 해석위원회) — 4개
-│   ├── IFRIC_21XX/          ← IFRIC 해석서 (IASB 해석위원회) — 15개
-│   └── 개념체계/             ← 개념체계 + 실무서 — 3개
-├── output/md/               ← 생성된 마크다운 파일 63개 (.gitignore)
-└── how_to_read_IFRS.md      ← IFRS 3단 구조, 권위 수준, 벡터 DB 메타데이터 설계 참조 문서
+├── ingest.py               ← Stage 2 CLI (마크다운 → 벡터 DB)
+├── ingester/
+│   ├── __init__.py
+│   ├── config.py           ← Config 데이터클래스 (DB URL, Upstage API 키 등)
+│   ├── models.py           ← Stage 2 데이터 모델 (StandardRecord, ChunkRecord 등)
+│   ├── md_parser.py        ← 구조 보존 마크다운 → 청크 파서
+│   ├── chunk_splitter.py   ← 초과 청크(4000토큰+) 분할
+│   ├── link_extractor.py   ← BC/IE → 본문 문단 참조 링크 추출
+│   ├── summary_builder.py  ← 기준서 식별용 요약 (목적+적용범위+정의) 생성
+│   ├── embedder.py         ← Upstage Solar Embedding 래퍼 (passage/query 분리)
+│   └── db_writer.py        ← PostgreSQL+pgvector 적재
+├── schema.sql              ← DB 스키마 (standards, chunks, footnotes, paragraph_links, standard_summaries)
+├── docker-compose.yml      ← pgvector/pgvector:pg17 (로컬 DB)
+├── search_test.ipynb       ← 2단계 벡터 검색 테스트 노트북
+├── pyproject.toml          ← 프로젝트 설정
+├── .env                    ← 환경변수 (UPSTAGE_API_KEY 등, .gitignore)
+├── IFRS_docx/              ← K-IFRS 원문 .docx 파일들 (63개)
+│   ├── IAS_10XX/           ← IAS 계열 (IASC 발행 기준서) — 25개
+│   ├── IFRS_11XX/          ← IFRS 계열 (IASB 발행 기준서) — 16개
+│   ├── SIC_20XX/           ← SIC 해석서 (IASC 해석위원회) — 4개
+│   ├── IFRIC_21XX/         ← IFRIC 해석서 (IASB 해석위원회) — 15개
+│   └── 개념체계/            ← 개념체계 + 실무서 — 3개
+├── output/md/              ← 생성된 마크다운 파일 63개 (.gitignore)
+├── output/search_chunks/   ← 검수용 JSON 내보내기 (.gitignore)
+└── how_to_read_IFRS.md     ← IFRS 3단 구조, 권위 수준, 벡터 DB 메타데이터 설계 참조 문서
 ```
 
 ## 빌드 & 실행
 
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
-pip install python-docx lxml
+pip install -e .   # python-docx, lxml, openai, psycopg[binary], pgvector, python-dotenv, sentence-transformers
 
-# 전체 변환 (63개)
-python convert.py
-
-# 단일 파일
+# --- Stage 1: docx → 마크다운 ---
+python convert.py                    # 전체 변환 (63개)
 python convert.py --single "IFRS_docx/IAS_10XX/시행중_K-IFRS_제1024호...docx"
+python convert.py --dry-run          # 파싱+통계만
 
-# dry-run (파싱+통계만)
-python convert.py --dry-run
+# --- Stage 2: 마크다운 → 벡터 DB ---
+docker compose up -d                 # PostgreSQL+pgvector 기동
+python ingest.py                     # 전체 (파싱+임베딩+DB 적재)
+python ingest.py --parse-only        # 파싱 통계만
+python ingest.py --skip-embedding    # DB 삽입 (임베딩 NULL)
+python ingest.py --export-json       # JSON 내보내기 (검수용)
+python ingest.py --single "K-IFRS 1115"  # 단일 기준서
+
+# --- 환경변수 (.env) ---
+# UPSTAGE_API_KEY=...
+# DATABASE_URL=dbname=kifrs (기본값)
 ```
 
-## 1단계 파이프라인 아키텍처
+## Stage 1 파이프라인 아키텍처
 
 ### IR(Intermediate Representation) 모델 (`converter/models.py`)
 
@@ -102,6 +127,44 @@ title: "고객과의 계약에서 생기는 수익"
 - `**bold**` → 핵심 원칙 문단 / `*italic*` → 정의 용어 참조
 - `[^N]` → 각주
 
+## Stage 2 파이프라인 아키텍처
+
+### 처리 흐름
+
+```
+output/md/*.md
+  → md_parser.parse_markdown_file()    → StandardRecord + ChunkRecord[] + FootnoteRecord[]
+  → chunk_splitter.split_oversized()   → 4000토큰 초과 청크 분할
+  → link_extractor.extract_links()     → ParagraphLink[] (BC/IE → 본문 참조)
+  → summary_builder.build_summary()    → StandardSummary (목적+적용범위+정의)
+  → embedder.embed_batch/single()      → 벡터 임베딩
+  → db_writer.upsert_*()               → PostgreSQL+pgvector 적재
+```
+
+### 임베딩 (`ingester/embedder.py`)
+
+- **Upstage Solar Embedding** (OpenAI 호환 API)
+- **passage/query 모델 분리**: 문서 적재 시 `embedding-passage`, 검색 쿼리 시 `embedding-query`
+- 차원: 4096, 최대 4000토큰 (한국어 ~5000자 절단)
+
+### DB 스키마 (`schema.sql`)
+
+| 테이블 | 용도 |
+|--------|------|
+| `standards` | 기준서 메타데이터 (63개) |
+| `chunks` | 검색 대상 청크 (번호 문단 단위, embedding vector(4096)) |
+| `standard_summaries` | 기준서 식별용 요약 (목적+적용범위+정의, embedding vector(4096)) |
+| `footnotes` | 각주 |
+| `paragraph_links` | BC/IE → 본문 문단 참조 링크 |
+
+- 정의(definitions) 청크는 `standard_summaries`에 통합되어 별도 검색 대상에서 제외
+
+### 검색 전략 (`search_test.ipynb`)
+
+2단계 벡터 검색:
+1. **Step 1** — `standard_summaries` 테이블에서 쿼리와 가장 유사한 기준서 식별
+2. **Step 2** — 식별된 기준서의 `chunks` 테이블에서 Level 1(Authoritative) 문단 검색
+
 ## K-IFRS 번호 체계 (2×2 매트릭스)
 
 첫째 자리가 기준서(1) vs 해석서(2), 둘째 자리가 구(舊)기구(0) vs 신(新)기구(1)를 구분한다.
@@ -155,4 +218,4 @@ IAS와 IFRS는 체계 설계 철학이 다르다. IAS는 선택적 회계처리�
 
 기존 파싱 파이프라인, 임베딩, 검색 코드: `/home/shin/Home/Study/_database/`
 - `pipeline/docx_parser.py` — 이 저장소의 `converter/docx_parser.py`의 원본 포크 소스
-- `pipeline/docx_chunker.py` — 2단계 청킹 참조
+- `pipeline/docx_chunker.py` — Stage 2 청킹 설계 참조
