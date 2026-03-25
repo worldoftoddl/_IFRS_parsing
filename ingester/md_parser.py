@@ -244,6 +244,11 @@ def parse_markdown_file(
         if stripped.startswith("### "):
             _flush_chunk()
             current_section_title = stripped[4:].strip()
+            # IAS 계열: "용어의 정의" 이후 서브섹션이 나오면 본문 복귀
+            # 정의 섹션 자체는 ### 없이 연속 텍스트로 구성됨
+            if current_component == "definitions":
+                current_component = "main"
+                current_authority = standard.base_authority
             continue
 
         # --- H1 (# 기준서 제목) → 건너뜀 ---
