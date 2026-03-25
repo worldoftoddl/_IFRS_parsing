@@ -12,7 +12,11 @@ _MAX_CHARS = 5000
 
 
 class Embedder:
-    """Upstage Solar Embedding API 호출 (OpenAI 호환)."""
+    """Upstage Solar Embedding API 호출 (OpenAI 호환).
+
+    - embed_batch / embed_single: 문서/청크 임베딩 (embedding-passage)
+    - embed_query: 검색 쿼리 임베딩 (embedding-query)
+    """
 
     def __init__(self, config: Config | None = None):
         cfg = config or Config.from_env()
@@ -20,33 +24,38 @@ class Embedder:
             api_key=cfg.upstage_api_key,
             base_url=cfg.embedding_base_url,
         )
-        self.model = cfg.embedding_model
+        self.model_passage = cfg.embedding_model  # "embedding-passage"
+        self.model_query = "embedding-query"
         self.dimensions = cfg.embedding_dimensions
 
     def embed_batch(self, texts: list[str]) -> list[list[float]]:
-        """텍스트 리스트를 개별 임베딩. 긴 텍스트는 절단."""
+        """문서/청크 배치 임베딩 (embedding-passage)."""
         all_embeddings: list[list[float]] = []
 
-        for i, text in enumerate(texts):
+        for text in texts:
             clean = _truncate(text)
-            emb = self._call_api_single(clean)
+            emb = self._call_api_single(clean, self.model_passage)
             all_embeddings.append(emb)
 
         return all_embeddings
 
     def embed_single(self, text: str) -> list[float]:
-        """단일 텍스트 임베딩."""
-        return self._call_api_single(_truncate(text))
+        """단일 문서/청크 임베딩 (embedding-passage)."""
+        return self._call_api_single(_truncate(text), self.model_passage)
+
+    def embed_query(self, text: str) -> list[float]:
+        """검색 쿼리 임베딩 (embedding-query)."""
+        return self._call_api_single(_truncate(text), self.model_query)
 
     def _call_api_single(
-        self, text: str, max_retries: int = 3
+        self, text: str, model: str, max_retries: int = 3
     ) -> list[float]:
         """단일 텍스트 API 호출 + 지수 백오프 재시도."""
         for attempt in range(max_retries):
             try:
                 response = self.client.embeddings.create(
                     input=text,
-                    model=self.model,
+                    model=model,
                 )
                 return response.data[0].embedding
             except Exception as e:
