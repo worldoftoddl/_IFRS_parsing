@@ -145,22 +145,11 @@ class DBWriter:
     # ------------------------------------------------------------------
 
     def create_vector_indexes(self):
-        """임베딩 삽입 후 벡터 인덱스 생성.
+        """벡터 인덱스 생성.
 
-        pgvector 0.6은 HNSW 최대 2000차원이므로 IVFFlat 사용.
-        16K행에서는 인덱스 없이도 충분히 빠르지만, 확장성을 위해 생성.
+        pgvector 0.6은 HNSW/IVFFlat 모두 2000차원 제한.
+        4096차원에서는 인덱스 없이 exact search 사용.
+        standard_id 필터로 기준서당 ~234행만 스캔하므로 성능 충분.
         """
-        print("Creating IVFFlat vector indexes...")
-        # chunks: 16K행 → lists=100 적당
-        self.conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_chunks_embedding ON chunks
-                USING ivfflat (embedding vector_cosine_ops)
-                WITH (lists = 100)
-        """)
-        # summaries: 63행 → lists=4
-        self.conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_summaries_embedding ON standard_summaries
-                USING ivfflat (embedding vector_cosine_ops)
-                WITH (lists = 4)
-        """)
-        print("IVFFlat indexes created.")
+        print("Vector index: skipped (4096d exceeds pgvector 0.6 limit of 2000d)")
+        print("Using exact search with standard_id filter (avg ~234 rows/standard)")
